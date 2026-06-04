@@ -1,0 +1,6 @@
+{
+  "name": "Amsterdam RP - Recrutement Staff",
+  "description": "Portail temps réel de recrutement de staff et de gestion de candidatures pour le serveur Emergency Hamburg (Roblox) Amsterdam RP.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

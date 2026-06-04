@@ -1,0 +1,362 @@
+import React, { useState } from 'react';
+import { User, StaffRole } from '../types';
+import { Shield, Radio, Sparkles, AlertCircle, Lock, Info, User as UserIcon, ArrowLeft, Crown, Briefcase, Eye } from 'lucide-react';
+
+interface LoginFormProps {
+  mode: 'staff' | 'candidate';
+  onLoginSimulated: (user: User) => void;
+  debugConfig: {
+    discordClientIdConfigured: boolean;
+    discordWebhookConfigured: boolean;
+    appUrl: string;
+  } | null;
+  onDiscordLogin: () => void;
+  onBack?: () => void;
+}
+
+export default function LoginForm({ mode, onLoginSimulated, debugConfig, onDiscordLogin, onBack }: LoginFormProps) {
+  const [pseudo, setPseudo] = useState('');
+  const [discordId, setDiscordId] = useState('');
+  const [selectedRole, setSelectedRole] = useState<StaffRole>(mode === 'candidate' ? 'user' : 'modo');
+  const [errorMsg, setErrorMsg] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const [resolvedProfile, setResolvedProfile] = useState<{ username: string; avatarUrl: string; globalName?: string } | null>(null);
+  const [isValidating, setIsValidating] = useState(false);
+
+  React.useEffect(() => {
+    const idToLookup = discordId.trim();
+    if (!/^\d{17,21}$/.test(idToLookup)) {
+      setResolvedProfile(null);
+      return;
+    }
+
+    const controller = new AbortController();
+    let isMounted = true;
+
+    const lookupDiscordUser = async () => {
+      setIsValidating(true);
+      try {
+        // Option 1 : JAPI.rest (Très fiable, CORS-enabled)
+        try {
+          const res = await fetch(`https://japi.rest/discord/v1/user/${idToLookup}`, {
+            signal: controller.signal
+          });
+          if (res.ok) {
+            const jData = await res.json();
+            if (isMounted && jData && jData.success && jData.data) {
+              const u = jData.data;
+              let avatar = u.avatarURL;
+              if (!avatar && u.avatar) {
+                avatar = `https://cdn.discordapp.com/avatars/${idToLookup}/${u.avatar}.png`;
+              }
+              if (!avatar) {
+                const defaultAvatarId = Number(BigInt(idToLookup) >> 22n) % 6;
+                avatar = `https://cdn.discordapp.com/embed/avatars/${defaultAvatarId}.png`;
+              }
+              setResolvedProfile({
+                username: u.username,
+                globalName: u.global_name || u.globalName,
+                avatarUrl: avatar
+              });
+              setIsValidating(false);
+              return;
+            }
+          }
+        } catch (e1) {
+          console.warn("JAPI.rest failed:", e1);
+        }
+
+        // Option 2 : Mesalytic Public Proxy
+        try {
+          const res = await fetch(`https://discordlookup.mesalytic.workers.dev/v1/user/${idToLookup}`, {
+            signal: controller.signal
+          });
+          if (res.ok) {
+            const mData = await res.json();
+            if (isMounted && mData && mData.username) {
+              let avatar = mData.avatar?.link;
+              if (!avatar && mData.raw?.avatar) {
+                avatar = `https://cdn.discordapp.com/avatars/${idToLookup}/${mData.raw.avatar}.png`;
+              }
+              if (!avatar) {
+                const defaultAvatarId = Number(BigInt(idToLookup) >> 22n) % 6;
+                avatar = `https://cdn.discordapp.com/embed/avatars/${defaultAvatarId}.png`;
+              }
+              setResolvedProfile({
+                username: mData.username,
+                globalName: mData.global_name,
+                avatarUrl: avatar
+              });
+              setIsValidating(false);
+              return;
+            }
+          }
+        } catch (e2) {
+          console.warn("Mesalytic failed:", e2);
+        }
+
+        // Option 3 : Lanyard API
+        try {
+          const res = await fetch(`https://api.lanyard.rest/v1/users/${idToLookup}`, {
+            signal: controller.signal
+          });
+          if (res.ok) {
+            const lData = await res.json();
+            if (isMounted && lData && lData.success && lData.data?.discord_user) {
+              const dUser = lData.data.discord_user;
+              let avatar = dUser.avatar ? `https://cdn.discordapp.com/avatars/${idToLookup}/${dUser.avatar}.png` : '';
+              if (!avatar) {
+                const defaultAvatarId = Number(BigInt(idToLookup) >> 22n) % 6;
+                avatar = `https://cdn.discordapp.com/embed/avatars/${defaultAvatarId}.png`;
+              }
+              setResolvedProfile({
+                username: dUser.username,
+                globalName: dUser.global_name,
+                avatarUrl: avatar
+              });
+              setIsValidating(false);
+              return;
+            }
+          }
+        } catch (e3) {
+          console.warn("Lanyard failed:", e3);
+        }
+
+        // Option 4 : Fallback default avatar
+        if (isMounted) {
+          const defaultAvatarId = Number(BigInt(idToLookup) >> 22n) % 6;
+          setResolvedProfile({
+            username: `Utilisateur #${idToLookup.substring(0, 5)}`,
+            avatarUrl: `https://cdn.discordapp.com/embed/avatars/${defaultAvatarId}.png`
+          });
+        }
+      } catch (err) {
+        console.error("General lookup failure:", err);
+      } finally {
+        if (isMounted) {
+          setIsValidating(false);
+        }
+      }
+    };
+
+    const timeoutId = setTimeout(() => {
+      lookupDiscordUser();
+    }, 450);
+
+    return () => {
+      isMounted = false;
+      controller.abort();
+      clearTimeout(timeoutId);
+    };
+  }, [discordId]);
+
+  // High-performance cyber-tech roles config (removed 'user' from staff list to free up space, as candidates use 'candidate' mode)
+  const rolesConfig = [
+    {
+      role: 'modo' as StaffRole,
+      label: 'Modérateur L1',
+      desc: 'Examen initial et modération en temps réel.',
+      icon: Shield,
+      glowColor: 'border-blue-500/20 text-blue-400 bg-blue-550/5',
+      activeColor: 'border-blue-550 text-blue-400 bg-blue-500/10 ring-1 ring-blue-400/30 shadow-[0_0_20px_rgba(59,130,246,0.25)] hover:bg-blue-500/15'
+    },
+    {
+      role: 'admin' as StaffRole,
+      label: 'Administrateur L2',
+      desc: 'Cadre supérieur, validation des verdicts.',
+      icon: Eye,
+      glowColor: 'border-indigo-500/20 text-indigo-400 bg-indigo-550/5',
+      activeColor: 'border-indigo-550 text-indigo-400 bg-indigo-500/10 ring-1 ring-indigo-400/30 shadow-[0_0_20px_rgba(99,102,241,0.25)] hover:bg-indigo-500/15'
+    },
+    {
+      role: 'gerant' as StaffRole,
+      label: 'Gérant Staff / RH',
+      desc: 'Responsable des effectifs et accès complet.',
+      icon: Briefcase,
+      glowColor: 'border-cyan-500/20 text-cyan-400 bg-cyan-550/5',
+      activeColor: 'border-cyan-550 text-cyan-400 bg-cyan-500/10 ring-1 ring-cyan-400/30 shadow-[0_0_20px_rgba(6,182,212,0.25)] hover:bg-cyan-500/15'
+    },
+    {
+      role: 'fondation' as StaffRole,
+      label: 'Fondation & Owner',
+      desc: 'Fondateur suprême, droits d’audit absolus.',
+      icon: Crown,
+      glowColor: 'border-violet-500/20 text-violet-400 bg-violet-550/5',
+      activeColor: 'border-violet-550 text-violet-400 bg-violet-500/10 ring-1 ring-violet-400/30 shadow-[0_0_20px_rgba(139,92,246,0.25)] hover:bg-violet-500/15'
+    }
+  ];
+
+  const handleManualLoginSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+
+    const trimmedPseudo = pseudo.trim();
+    if (!trimmedPseudo) {
+      setErrorMsg(mode === 'candidate' ? 'Veuillez inscrire votre pseudo Roblox.' : 'Veuillez inscrire votre pseudo Discord.');
+      return;
+    }
+
+    if (!discordId.trim() || !/^\d+$/.test(discordId)) {
+      setErrorMsg('Veuillez renseigner un identifiant Discord numérique (Snowflake de 17-18 chiffres).');
+      return;
+    }
+
+    if (discordId.length < 15) {
+      setErrorMsg('L’identifiant Discord Snowflake est trop court.');
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      // Pick a beautiful high-contrast avatar based on the role
+      const avatarMap: Record<StaffRole, string> = {
+        user: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=150&h=150',
+        modo: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&h=150',
+        admin: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=150&h=150',
+        gerant: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150',
+        fondation: 'https://images.unsplash.com/photo-1566492031773-4f4e44671857?auto=format&fit=crop&w=150&h=150',
+      };
+      
+      const roleToSubmit = mode === 'candidate' ? 'user' : selectedRole;
+      const selectedAvatar = avatarMap[roleToSubmit];
+
+      let finalUsername = trimmedPseudo;
+      let finalAvatar = selectedAvatar;
+
+      if (resolvedProfile) {
+        finalAvatar = resolvedProfile.avatarUrl;
+        if (mode === 'staff') {
+          finalUsername = resolvedProfile.globalName || resolvedProfile.username;
+        }
+      }
+
+      const response = await fetch('/api/auth/simulation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: discordId.trim(),
+          username: finalUsername,
+          avatar: finalAvatar,
+          role: roleToSubmit
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        onLoginSimulated(data.user);
+      } else {
+        const err = await response.json();
+        setErrorMsg(err.error || 'Connexion refusée par la passerelle de sécurité.');
+      }
+    } catch (err) {
+      console.error(err);
+      setErrorMsg('Échec de la liaison avec le serveur d’Amsterdam RP.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="max-w-2xl mx-auto glass rounded-2xl overflow-hidden shadow-2xl relative border-none animate-fade-in" id="login-container-card">
+      {/* Immersive radial neon halos in the background */}
+      <div className="absolute top-0 right-0 w-80 h-80 bg-gradient-to-br from-cyan-500/10 to-violet-550/10 blur-[80px] rounded-full pointer-events-none"></div>
+      <div className="absolute -bottom-8 -left-8 w-80 h-80 bg-gradient-to-br from-blue-500/10 to-cyan-500/10 blur-[80px] rounded-full pointer-events-none"></div>
+
+      {/* Header card area */}
+      <div className="p-8 pb-6 bg-black/20 text-center relative border-b border-white/[0.02]">
+        {onBack && (
+          <button
+            onClick={onBack}
+            className="absolute top-6 left-6 inline-flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white rounded-lg text-xs font-semibold cursor-pointer transition select-none border-none"
+            type="button"
+            id="btn-back-to-home"
+          >
+            <ArrowLeft className="w-4 h-4 text-cyan-400" />
+            <span>Retour</span>
+          </button>
+        )}
+
+        <div className="inline-flex p-3.5 bg-cyan-500/10 text-cyan-400 rounded-xl mb-4 relative shadow-lg shadow-cyan-500/5">
+          <Radio className="w-7 h-7 text-cyan-400 animate-pulse" />
+          <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-slate-900 animate-pulse"></span>
+        </div>
+
+        <h2 className="font-display font-black text-xl text-slate-100 tracking-wide uppercase">
+          {mode === 'candidate' ? 'Lancer ma Candidature' : 'Accréditation Staff Officielle'}
+        </h2>
+        <p className="text-xs text-slate-400 leading-relaxed max-w-sm mx-auto mt-1.5">
+          {mode === 'candidate' 
+            ? 'Initiez votre dossier personnel pour rejoindre la modération d’Amsterdam RP'
+            : 'Espace d’administration destiné aux modérateurs et gérants d’Amsterdam RP'}
+        </p>
+      </div>
+
+      <div className="p-8 space-y-6">
+        {/* Connection via Discord OAuth */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-slate-450 font-mono flex items-center gap-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-ping"></span>
+              Liaison Sécurisée Directe
+            </h3>
+            {debugConfig?.discordClientIdConfigured && (
+              <span className="text-[9px] bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded font-mono font-bold uppercase">
+                API CONNECTÉE
+              </span>
+            )}
+          </div>
+
+          <button
+            onClick={onDiscordLogin}
+            className="w-full inline-flex items-center justify-center gap-3 px-6 py-4 bg-[#5865F2] hover:bg-[#4752C4] text-white font-extrabold text-sm tracking-wide rounded-xl cursor-pointer transition shadow-lg shadow-indigo-650/15 hover:-translate-y-0.5 active:translate-y-0"
+            id="btn-discord-oauth-real"
+          >
+            <Sparkles className="w-5 h-5 shrink-0 text-yellow-300 animate-pulse" />
+            <span>S'authentifier avec Discord</span>
+          </button>
+
+          {debugConfig?.discordClientIdConfigured && (
+            <div className="p-4 bg-cyan-950/25 border border-cyan-500/25 rounded-xl space-y-2 text-xs text-cyan-300 antialiased">
+              <div className="flex gap-2 items-center font-bold text-cyan-400">
+                <Info className="w-4 h-4 text-cyan-400 shrink-0" />
+                <span>Diagnostic de Liaison Discord</span>
+              </div>
+              <p className="text-[11px] text-slate-300 leading-normal">
+                Si vous rencontrez l'erreur <strong className="text-amber-400">"redirect_uri OAuth2 non valide"</strong> ou si redirection se fige sur <strong className="text-amber-400">localhost:3000</strong>, vous devez enregistrer cette URL de redirection exacte dans votre <a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer" className="text-cyan-400 underline hover:text-cyan-300 font-semibold inline-flex items-center gap-0.5">Portail Développeur Discord</a> (onglet OAuth2 &rarr; Redirects) :
+              </p>
+              <div className="bg-black/50 p-3 rounded-lg font-mono text-[10px] text-emerald-400 flex items-center justify-between gap-1 border border-cyan-500/10">
+                <span className="truncate select-all">{window.location.origin}/api/auth/callback</span>
+                <span className="text-[8px] bg-cyan-500/10 text-cyan-400 px-1.5 py-0.5 rounded font-extrabold uppercase shrink-0">COPILOCK</span>
+              </div>
+              <p className="text-[10px] text-slate-400 leading-normal">
+                Notre serveur gère aussi automatiquement l'alias <code className="text-slate-300 px-1 bg-black/30 rounded">/api/auth/callback/discord</code> si vous préférez.
+              </p>
+            </div>
+          )}
+
+          {!debugConfig?.discordClientIdConfigured && (
+            <div className="p-4 bg-amber-500/5 border border-amber-500/10 rounded-xl space-y-1 text-xs text-amber-300">
+              <div className="flex gap-2 items-center font-bold">
+                <AlertCircle className="w-4 h-4 text-amber-450 shrink-0" />
+                <span>Rappel : Discord OAuth non configuré</span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed pl-6">
+                Pour vous authentifier via votre propre compte Discord réel, ajoutez vos identifiants <code className="font-mono bg-black/45 text-amber-300 px-1 py-0.5 rounded">DISCORD_CLIENT_ID</code> et <code className="font-mono bg-black/45 text-amber-300 px-1.5 rounded">DISCORD_CLIENT_SECRET</code> dans vos Secrets.
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Informational banner footer */}
+        <div className="p-3.5 bg-white/[0.02] border border-white/[0.02] rounded-xl flex gap-2.5 items-start text-[11px] text-slate-400">
+          <Info className="w-4 h-4 text-cyan-400 shrink-0 mt-0.5" />
+          <p className="leading-relaxed text-left">
+            L’authentification via Discord est un prérequis obligatoire pour déposer une demande de candidature ou pour accéder à l'espace d'administration d'Amsterdam RP si vous êtes déjà membre du Staff.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
